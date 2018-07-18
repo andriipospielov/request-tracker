@@ -1,0 +1,75 @@
+version: '2'
+services:
+    proxy:
+        image: traefik
+        container_name: traefik_proxy
+        networks:
+            - webgateway
+        ports:
+            - "80:80"
+            - "443:443"
+            - "8080:8080"
+        volumes:
+            - /var/run/docker.sock:/var/run/docker.sock
+            - ../dev/proxy/traefik.toml:/etc/traefik/traefik.toml
+            - ../dev/proxy/ssl:/etc/ssl/certs/outer/
+        command: --web
+        restart: always
+    fpm:
+        image: request-tracker-fpm
+        container_name: request_tracker_fpm
+        depends_on:
+          - proxy
+        build:
+            context: ../..
+            dockerfile: ./docker/dev/fpm/Dockerfile
+        restart: 'no'
+        env_file: ./env.conf
+        volumes:
+            - ../../:/code
+        entrypoint: /code/docker/dev/fpm/entrypoint.sh
+        networks:
+            - default
+    nginx:
+        image: nginx:latest
+        container_name: request_tracker_nginx
+        depends_on:
+            - fpm
+            - proxy
+        volumes_from:
+            - fpm:ro
+        volumes:
+            - ../dev/nginx/nginx.conf:/etc/nginx/nginx.conf
+        restart: 'no'
+        networks:
+            default:
+            proxy:
+              aliases:
+                  - request-tracker.localhost
+        labels:
+            - "traefik.enable=true"
+            - "traefik.port=80"
+            - "traefik.frontend.rule=Host:request-tracker.localhost"
+            - "traefik.frontend.passHostHeader=true"
+            - "traefik.docker.network=traefik_webgateway"
+    db:
+        container_name: request_tracker_db
+        image: mariadb
+        environment:
+            - MYSQL_DATABASE=request_tracker
+            - MYSQL_ROOT_PASSWORD=mypass
+        volumes:
+            - ./mysql/:/var/lib/mysql/
+        restart: 'no'
+        networks:
+            - default
+
+networks:
+    webgateway:
+        driver: bridge
+
+    default:
+        driver: bridge
+    proxy:
+        external:
+            name: traefik_webgateway
